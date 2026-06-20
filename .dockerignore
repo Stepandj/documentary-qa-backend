@@ -1,0 +1,27 @@
+# Keep the build context small and reproducible — exclude everything the image
+# doesn't need (the Dockerfile only COPYs app/, static/, data/, requirements.txt).
+
+# Virtualenv / local Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Secrets / local config
+.env
+
+# Docs and dev-only files (not needed at runtime)
+*.md
+tests/
+
+# Model / embedding caches and OS junk
+.cache/
+models/
+*.gguf
+.DS_Store
