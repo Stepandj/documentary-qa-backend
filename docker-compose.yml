@@ -13,7 +13,7 @@ services:
     image: ollama/ollama:latest
     entrypoint: ["/bin/bash", "/entrypoint.sh"]
     environment:
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
       - PULL_EMBED_MODEL=${PULL_EMBED_MODEL:-false}
       - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
     volumes:
@@ -23,7 +23,7 @@ services:
       - "11434:11434"
     healthcheck:
       # Healthy only once the chat model has finished pulling, so the api waits for it.
-      test: ["CMD-SHELL", "ollama list | grep -q \"${OLLAMA_MODEL:-llama3.1:8b}\""]
+      test: ["CMD-SHELL", "ollama list | grep -q \"${OLLAMA_MODEL:-llama3.2:3b}\""]
       interval: 10s
       timeout: 5s
       retries: 60
@@ -41,7 +41,7 @@ services:
     environment:
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - OLLAMA_BASE_URL=http://ollama:11434/v1
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
       - LLM_MODEL=${LLM_MODEL:-}
       # Embeddings run locally inside the api (baked into the image) → no Ollama needed
       # for indexing, so startup is fast and robust. Set to "ollama" to use nomic instead.

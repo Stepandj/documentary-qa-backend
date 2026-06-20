@@ -19,7 +19,7 @@ Requires Docker.
 docker compose up
 ```
 
-On first boot the `ollama` service downloads the chat model (`llama3.1:8b`, ~5 GB) — this
+On first boot the `ollama` service downloads the chat model (`llama3.2:3b`, ~2 GB) — this
 is a one-time download cached on a named volume. The API waits until the model is ready,
 then comes up on **http://localhost:8000**. If the pull repeatedly fails, the Ollama
 container exits instead of hanging forever behind the health check. A minimal web UI is at
@@ -35,13 +35,14 @@ curl -s http://localhost:8000/ask \
 
 Health check: `curl http://localhost:8000/health`
 
-### Lighter model
+### Higher-quality model
 
-`llama3.1:8b` needs a reasonably capable machine. For a smaller/faster pull, set a
-different model before starting:
+The default `llama3.2:3b` is chosen to stay fast (under the 30s budget) and small on any
+hardware, including CPU-only Docker. For higher answer quality on a capable machine, switch
+to the larger model — a single variable, no rebuild:
 
 ```bash
-OLLAMA_MODEL=llama3.2:3b docker compose up
+OLLAMA_MODEL=llama3.1:8b docker compose up
 ```
 
 ## Running without Docker (local dev)
@@ -52,7 +53,7 @@ pip install -r requirements.txt
 
 # Option A: local Ollama (install from https://ollama.com, then:)
 ollama serve &              # in another terminal
-ollama pull llama3.1:8b
+ollama pull llama3.2:3b
 uvicorn app.main:app --reload
 
 # Embeddings stay local with no API key needed. If the MiniLM model is already cached,

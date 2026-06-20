@@ -31,7 +31,7 @@ pull_with_retry() {
   done
 }
 
-CHAT_MODEL="${OLLAMA_MODEL:-llama3.1:8b}"
+CHAT_MODEL="${OLLAMA_MODEL:-llama3.2:3b}"
 echo "Pulling chat model: ${CHAT_MODEL}"
 if ! pull_with_retry "${CHAT_MODEL}"; then
   kill -TERM "${server_pid}" 2>/dev/null

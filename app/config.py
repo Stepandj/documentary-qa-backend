@@ -20,7 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # hosted model ids drift over time.
 PROVIDERS: dict[str, dict[str, str]] = {
     # Local, fully offline, no key required (api_key is sent but ignored by Ollama).
-    "ollama": {"base_url": "http://localhost:11434/v1", "key_env": "", "model": "llama3.1:8b"},
+    "ollama": {"base_url": "http://localhost:11434/v1", "key_env": "", "model": "llama3.2:3b"},
     # Chosen open-source showcase model (open-weight, Modified MIT).
     "kimi": {"base_url": "https://api.moonshot.ai/v1", "key_env": "MOONSHOT_API_KEY", "model": "kimi-k2-0905-preview"},
     # Other open-weight options — swap in by changing LLM_PROVIDER only.
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # Local chat model for the ollama provider. Single source of truth: the SAME
     # OLLAMA_MODEL the compose entrypoint pulls and the healthcheck waits for, so the api
     # always requests the model that was actually pulled (LLM_MODEL still overrides).
-    ollama_model: str = "llama3.1:8b"
+    ollama_model: str = "llama3.2:3b"
 
     # --- Retrieval ---
     chunk_segments: int = Field(2, ge=1)   # transcript segments grouped per chunk
