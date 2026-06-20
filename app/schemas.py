@@ -19,9 +19,10 @@ class AskRequest(BaseModel):
 
 
 class Source(BaseModel):
+    # Exactly the shape the assignment specifies: a rough time code and a short excerpt.
+    # Sources are returned already ordered by relevance (most relevant first).
     timestamp: str = Field(..., description="Rough time code (HH:MM:SS) where the supporting passage starts.")
     excerpt: str = Field(..., description="Short verbatim snippet from the transcript.")
-    score: float = Field(..., description="Relevance score used for ranking (higher = more relevant); reflects the ordering.")
 
 
 class AskResponse(BaseModel):

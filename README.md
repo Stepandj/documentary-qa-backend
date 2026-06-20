@@ -3,7 +3,7 @@
 A retrieval-augmented (RAG) backend that answers natural-language questions about a
 documentary transcript and returns grounded answers with ranked, timestamped sources.
 
-- **Endpoint:** `POST /ask` → `{ "answer": "...", "sources": [ { "timestamp": "HH:MM:SS", "excerpt": "...", "score": 0.xx } ] }`
+- **Endpoint:** `POST /ask` → `{ "answer": "...", "sources": [ { "timestamp": "HH:MM:SS", "excerpt": "..." } ] }` (sources ordered most-relevant first)
 - Runs **fully locally and offline** by default (Ollama + an open-source model). No paid
   service required.
 - LLM provider is **switchable by environment variable** — local Ollama, Kimi K2, GLM,
@@ -90,7 +90,7 @@ exact variable.
 
 ### `POST /ask`
 Request: `{ "question": "..." }`
-Response: `{ "answer": "...", "sources": [ { "timestamp", "excerpt", "score" } ] }`
+Response: `{ "answer": "...", "sources": [ { "timestamp", "excerpt" } ] }` (sources ranked by relevance, most relevant first)
 
 Out-of-scope questions (not covered by the transcript) return
 `"I don't know — this isn't covered in the documentary."` with no sources.

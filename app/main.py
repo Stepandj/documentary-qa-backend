@@ -37,10 +37,8 @@ class QAService:
         self.llm = LLMClient(self.settings)
 
     def _sources(self, hits) -> list[Source]:
-        return [
-            Source(timestamp=h.chunk.timestamp, excerpt=h.chunk.excerpt, score=round(h.score, 4))
-            for h in hits
-        ]
+        # hits arrive already ranked; emit the spec's {timestamp, excerpt} in that order.
+        return [Source(timestamp=h.chunk.timestamp, excerpt=h.chunk.excerpt) for h in hits]
 
     def _prepare(self, question: str):
         """Shared retrieval + scope decision for both the blocking and streaming paths.
