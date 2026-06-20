@@ -24,8 +24,9 @@ from .schemas import AskRequest, AskResponse, Source
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
-# Returned when the LLM produces no content despite in-scope context.
-EMPTY_ANSWER_FALLBACK = "I couldn't generate an answer from the transcript for that question."
+
+class BackendUnavailableError(RuntimeError):
+    """Operational failure in retrieval / embeddings / LLM backends."""
 
 
 class QAService:
@@ -46,7 +47,10 @@ class QAService:
         Returns (in_scope, messages_or_None, hits). When out-of-scope, messages is None
         and the caller returns the canned abstention without ever calling the LLM.
         """
-        result = self.retriever.retrieve(question)
+        try:
+            result = self.retriever.retrieve(question)
+        except Exception as exc:
+            raise BackendUnavailableError(f"Retrieval backend error: {exc}") from exc
         if not result.in_scope:
             return False, None, []
         return True, build_messages(question, result.hits), result.hits
@@ -55,33 +59,54 @@ class QAService:
         in_scope, messages, hits = self._prepare(question)
         if not in_scope:
             return AskResponse(answer=OUT_OF_SCOPE_ANSWER, sources=[])
-        answer = self.llm.complete(messages) or EMPTY_ANSWER_FALLBACK
+        try:
+            answer = (self.llm.complete(messages) or "").strip()
+        except Exception as exc:
+            raise BackendUnavailableError(f"LLM backend error: {exc}") from exc
+        if not answer or answer == OUT_OF_SCOPE_ANSWER:
+            return AskResponse(answer=OUT_OF_SCOPE_ANSWER, sources=[])
         return AskResponse(answer=answer, sources=self._sources(hits))
 
     def stream(self, question: str):
         """Yield Server-Sent-Events: token deltas, then a final 'sources' event.
 
         The LLM call runs inside this generator (after the response has started), so its
-        errors can't reach the route handler — we catch them here and emit an 'error'
-        event followed by 'done' so the client is never left hanging on a silent stream.
+        errors can't reach the route handler — we catch both retrieval and LLM failures
+        here and emit an 'error' event followed by 'done' so the client is never left
+        hanging on a silent stream.
         """
-        in_scope, messages, hits = self._prepare(question)
-        if not in_scope:
-            yield _sse("token", {"text": OUT_OF_SCOPE_ANSWER})
-            yield _sse("sources", {"sources": []})
+        try:
+            in_scope, messages, hits = self._prepare(question)
+            if not in_scope:
+                yield _sse("token", {"text": OUT_OF_SCOPE_ANSWER})
+                yield _sse("sources", {"sources": []})
+                yield _sse("done", {})
+                return
+
+            emitted: list[str] = []
+            for delta in self.llm.stream(messages):
+                emitted.append(delta)
+                yield _sse("token", {"text": delta})
+        except BackendUnavailableError as exc:
+            yield _sse("error", {"detail": str(exc)})
             yield _sse("done", {})
             return
-        emitted = False
-        try:
-            for delta in self.llm.stream(messages):
-                emitted = True
-                yield _sse("token", {"text": delta})
         except Exception as exc:  # provider/connectivity failure mid-stream
             yield _sse("error", {"detail": f"LLM backend error: {exc}"})
             yield _sse("done", {})
             return
-        if not emitted:
-            yield _sse("token", {"text": EMPTY_ANSWER_FALLBACK})
+
+        answer = "".join(emitted).strip()
+        if not answer:
+            yield _sse("token", {"text": OUT_OF_SCOPE_ANSWER})
+            yield _sse("sources", {"sources": []})
+            yield _sse("done", {})
+            return
+        if answer == OUT_OF_SCOPE_ANSWER:
+            yield _sse("sources", {"sources": []})
+            yield _sse("done", {})
+            return
+
         sources = [s.model_dump() for s in self._sources(hits)]
         yield _sse("sources", {"sources": sources})
         yield _sse("done", {})
@@ -126,8 +151,8 @@ def ask(req: AskRequest, stream: bool = Query(False)):
         return StreamingResponse(service.stream(req.question), media_type="text/event-stream")
     try:
         return service.answer(req.question)
-    except OpenAIError as exc:  # only LLM/provider failures become 503
-        raise HTTPException(status_code=503, detail=f"LLM backend error: {exc}") from exc
+    except (BackendUnavailableError, OpenAIError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/")

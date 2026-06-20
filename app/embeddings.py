@@ -1,16 +1,31 @@
 """Embedding client with two interchangeable backends.
 
-- ``local``  : sentence-transformers, fully offline, no Ollama needed (default, so
-               dev/tests run with zero external services).
+- ``local``  : a cached sentence-transformers model when available, otherwise a
+               deterministic zero-download fallback, so dev/tests run with zero
+               external services.
 - ``ollama`` : nomic-embed-text via Ollama's OpenAI-compatible /v1/embeddings endpoint.
 
 Both return L2-normalized float32 vectors so that a dot product == cosine similarity.
 """
 from __future__ import annotations
 
+import hashlib
+import logging
+import re
+
 import numpy as np
 
 from .config import Settings
+
+_LOGGER = logging.getLogger(__name__)
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_HASH_DIMS = 1536
+_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "did", "do", "does", "for",
+    "from", "had", "has", "have", "how", "i", "in", "is", "it", "its", "of", "on", "or",
+    "that", "the", "their", "them", "they", "this", "to", "was", "were", "what", "when",
+    "where", "which", "who", "why", "with", "would", "you", "your",
+}
 
 
 def _normalize(vectors: np.ndarray) -> np.ndarray:
@@ -25,20 +40,79 @@ def _normalize(vectors: np.ndarray) -> np.ndarray:
     return vectors / norms
 
 
+def _hash_slot(feature: str, dims: int) -> tuple[int, float]:
+    digest = hashlib.blake2b(feature.encode("utf-8"), digest_size=16).digest()
+    slot = int.from_bytes(digest[:8], "little") % dims
+    sign = 1.0 if digest[8] & 1 else -1.0
+    return slot, sign
+
+
+def _tokenize(text: str) -> list[str]:
+    return _TOKEN_RE.findall(text.lower())
+
+
+def _char_ngrams(token: str) -> list[str]:
+    if len(token) < 3:
+        return []
+    padded = f" {token} "
+    grams: list[str] = []
+    for n in (3, 4, 5):
+        if len(padded) < n:
+            continue
+        grams.extend(padded[i : i + n] for i in range(len(padded) - n + 1))
+    return grams
+
+
+def _hashing_embed(texts: list[str], dims: int = _HASH_DIMS) -> np.ndarray:
+    """Deterministic fallback embedder that needs no downloads or network access."""
+    if not texts:
+        return np.zeros((0, dims), dtype=np.float32)
+
+    matrix = np.zeros((len(texts), dims), dtype=np.float32)
+    for row, text in enumerate(texts):
+        tokens = _tokenize(text)
+        core_tokens = [tok for tok in tokens if tok not in _STOPWORDS] or tokens
+
+        for token in core_tokens:
+            slot, sign = _hash_slot(f"tok:{token}", dims)
+            matrix[row, slot] += 2.0 * sign
+            for gram in _char_ngrams(token):
+                slot, sign = _hash_slot(f"chr:{gram}", dims)
+                matrix[row, slot] += 0.15 * sign
+
+        for left, right in zip(core_tokens, core_tokens[1:]):
+            slot, sign = _hash_slot(f"bigram:{left}_{right}", dims)
+            matrix[row, slot] += 0.75 * sign
+
+    return _normalize(matrix)
+
+
 class EmbeddingClient:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.backend = settings.embed_backend
         self.model_name = settings.resolved_embed_model()
-        self._st_model = None       # lazy sentence-transformers model
+        self._st_model = None       # lazy sentence-transformers model; False => fallback
         self._openai_client = None  # lazy OpenAI client for Ollama
 
     # --- lazy initialisers -------------------------------------------------
     def _sentence_transformer(self):
         if self._st_model is None:
-            from sentence_transformers import SentenceTransformer  # heavy import, deferred
+            try:
+                from sentence_transformers import SentenceTransformer  # heavy import, deferred
 
-            self._st_model = SentenceTransformer(self.model_name)
+                # Stay strictly offline here: use the cache if the model is already
+                # present, otherwise fall back immediately instead of attempting a
+                # network download (which hangs tests and fresh offline setups).
+                self._st_model = SentenceTransformer(self.model_name, local_files_only=True)
+            except Exception as exc:
+                _LOGGER.warning(
+                    "Falling back to the built-in hashing embedder because the cached "
+                    "sentence-transformers model %r is unavailable: %s",
+                    self.model_name,
+                    exc,
+                )
+                self._st_model = False
         return self._st_model
 
     def _ollama(self):
@@ -62,7 +136,10 @@ class EmbeddingClient:
             vectors = np.array([item.embedding for item in resp.data], dtype=np.float32)
         else:
             model = self._sentence_transformer()
-            vectors = model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+            if model is False:
+                vectors = _hashing_embed(texts)
+            else:
+                vectors = model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
         return _normalize(vectors)
 
     def embed_one(self, text: str) -> np.ndarray:

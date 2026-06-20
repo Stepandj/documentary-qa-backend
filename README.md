@@ -21,7 +21,9 @@ docker compose up
 
 On first boot the `ollama` service downloads the chat model (`llama3.1:8b`, ~5 GB) — this
 is a one-time download cached on a named volume. The API waits until the model is ready,
-then comes up on **http://localhost:8000**. A minimal web UI is at the root URL.
+then comes up on **http://localhost:8000**. If the pull repeatedly fails, the Ollama
+container exits instead of hanging forever behind the health check. A minimal web UI is at
+the root URL.
 
 Ask a question:
 
@@ -53,7 +55,9 @@ ollama serve &              # in another terminal
 ollama pull llama3.1:8b
 uvicorn app.main:app --reload
 
-# Embeddings run locally (all-MiniLM-L6-v2, downloaded once); no key needed.
+# Embeddings stay local with no API key needed. If the MiniLM model is already cached,
+# it is used; otherwise the app falls back to a built-in zero-download embedder so
+# tests and offline dev still start cleanly.
 ```
 
 ## Using a hosted open-source model (e.g. Kimi K2)
@@ -90,7 +94,8 @@ exact variable.
 
 ### `POST /ask`
 Request: `{ "question": "..." }`
-Response: `{ "answer": "...", "sources": [ { "timestamp", "excerpt" } ] }` (sources ranked by relevance, most relevant first)
+Response: `{ "answer": "...", "sources": [ { "timestamp", "excerpt" } ] }` with **2-3**
+ranked sources for in-scope answers (most relevant first).
 
 Out-of-scope questions (not covered by the transcript) return
 `"I don't know — this isn't covered in the documentary."` with no sources.
@@ -108,4 +113,4 @@ pytest
 ## Configuration
 
 All knobs are environment variables — see [.env.example](.env.example) for the full,
-documented list (provider, models, chunking, retrieval thresholds).
+documented list (provider, models, chunking, retrieval thresholds, request timeout).

@@ -3,8 +3,8 @@
 # first boot so `docker compose up` is the only command a reviewer needs. Pulled models
 # live on a named volume, so subsequent starts are instant and fully offline.
 #
-# Deliberately NOT using `set -e`: a transient pull failure must not kill PID 1 and
-# leave the server orphaned with the healthcheck never satisfied. We retry instead.
+# Deliberately NOT using `set -e`: we want retries plus a controlled shutdown path that
+# fails fast instead of hanging forever behind an unmet healthcheck.
 
 ollama serve &
 server_pid=$!
@@ -22,8 +22,8 @@ pull_with_retry() {
   local attempt=1
   until ollama pull "$model"; do
     if [ "$attempt" -ge 5 ]; then
-      echo "WARNING: failed to pull ${model} after ${attempt} attempts; will keep serving and retry on next boot." >&2
-      return 0
+      echo "ERROR: failed to pull ${model} after ${attempt} attempts." >&2
+      return 1
     fi
     echo "Pull of ${model} failed (attempt ${attempt}); retrying in 5s..." >&2
     attempt=$((attempt + 1))
@@ -33,13 +33,21 @@ pull_with_retry() {
 
 CHAT_MODEL="${OLLAMA_MODEL:-llama3.1:8b}"
 echo "Pulling chat model: ${CHAT_MODEL}"
-pull_with_retry "${CHAT_MODEL}"
+if ! pull_with_retry "${CHAT_MODEL}"; then
+  kill -TERM "${server_pid}" 2>/dev/null
+  wait "${server_pid}" 2>/dev/null
+  exit 1
+fi
 
 # Only needed if you switch embeddings to the Ollama backend (EMBED_BACKEND=ollama).
 if [ "${PULL_EMBED_MODEL:-false}" = "true" ]; then
   EMBED_MODEL_NAME="${EMBED_MODEL:-nomic-embed-text}"
   echo "Pulling embedding model: ${EMBED_MODEL_NAME}"
-  pull_with_retry "${EMBED_MODEL_NAME}"
+  if ! pull_with_retry "${EMBED_MODEL_NAME}"; then
+    kill -TERM "${server_pid}" 2>/dev/null
+    wait "${server_pid}" 2>/dev/null
+    exit 1
+  fi
 fi
 
 echo "Models ready."

@@ -28,10 +28,12 @@ simpler alternative; grouping measurably improved retrieval on the short segment
 
 ## 2. Retrieval
 
-**Embeddings.** Default is `sentence-transformers/all-MiniLM-L6-v2` running locally and
-offline (baked into the Docker image) — no API key, no network. `nomic-embed-text` via
-Ollama is available (`EMBED_BACKEND=ollama`) as a higher-quality option. Vectors are
-L2-normalized so a dot product is cosine similarity.
+**Embeddings.** Default is `sentence-transformers/all-MiniLM-L6-v2` running locally when
+the model is already cached. On a fresh offline machine, the app falls back immediately
+to a deterministic built-in hashing embedder instead of attempting a network download, so
+tests and local startup remain zero-dependency. `nomic-embed-text` via Ollama is
+available (`EMBED_BACKEND=ollama`) as a higher-quality option. Vectors are L2-normalized
+so a dot product is cosine similarity.
 
 **Index.** Brute-force in-memory NumPy (`app/index.py`). At ~260 chunks a vector database
 (FAISS/Chroma) is unjustified overhead: the entire search is one matrix-vector product
@@ -54,6 +56,10 @@ hallucination:
    clearly in-scope questions scored ≥0.26 (e.g. Annie Gray 0.26, bread 0.62), while
    clearly off-topic ones scored <0.18 (capital of Australia 0.17, World Cup 0.10). It is
    embedding-model-specific and must be re-tuned if you change models.
+   As a backstop, an exact-token BM25 hit can still mark the query in-scope when it
+   matches at least two content words (or one, for a one-word query), which protects
+   proper-name / exact-term questions when a weaker local fallback embedder under-scores
+   them.
 2. The **LLM abstention prompt** (below) — the primary guard for topically-adjacent
    questions that clear the threshold but aren't actually answered by the passages.
 
@@ -68,7 +74,8 @@ hallucination:
 
 Numbering the sources and requiring bracket citations keeps answers traceable to specific
 timestamps, and the explicit abstention instruction is what stops the model from filling
-gaps with outside knowledge. Temperature is low (0.1) for faithful, repeatable answers.
+gaps with outside knowledge. Temperature is low (0.1) for faithful, repeatable answers,
+and backend request timeout defaults under 30 seconds to stay within the response budget.
 
 ## 4. Provider abstraction
 

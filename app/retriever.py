@@ -23,7 +23,7 @@ from .config import Settings
 from .embeddings import EmbeddingClient
 from .index import SearchHit, VectorIndex, top_k_indices
 from .ingest import load_chunks
-from .lexical import BM25Index
+from .lexical import BM25Index, tokenize
 
 _RRF_K = 60  # standard Reciprocal Rank Fusion constant
 
@@ -90,6 +90,23 @@ class Retriever:
         hits = [SearchHit(chunk=c, score=float(s)) for c, s in zip(chunks, scores)]
         return sorted(hits, key=lambda h: h.score, reverse=True)
 
+    def _lexical_scope_match(self, question: str, bm25: np.ndarray) -> bool:
+        """Allow exact-token questions through even when dense scores are conservative.
+
+        This backstops proper-name / exact-term queries that BM25 clearly matches but a
+        weaker dense embedder may under-score. We require the top lexical hit to share at
+        least half the query's content tokens (rounded up, with a minimum of 1).
+        """
+        query_tokens = tokenize(question)
+        if not query_tokens or bm25.size == 0:
+            return False
+        top_idx = int(np.argmax(bm25))
+        if float(bm25[top_idx]) <= 0.0:
+            return False
+        overlap = self.bm25.overlap_count(question, top_idx)
+        min_overlap = 1 if len(query_tokens) == 1 else 2
+        return overlap >= min_overlap
+
     # --- public API --------------------------------------------------------
     def retrieve(self, question: str) -> RetrievalResult:
         if len(self.index) == 0:
@@ -98,16 +115,19 @@ class Retriever:
         query_vec = self.embedder.embed_one(question)
         cosine = self.index.cosine_scores(query_vec)
         best_score = float(cosine.max())
-        # Scope is gated on the dense cosine — the semantic signal, robust to incidental
-        # lexical overlap (e.g. an off-topic question sharing one common word).
-        in_scope = best_score >= self.settings.score_threshold
+        bm25 = self.bm25.scores(question)
+        # Scope is primarily gated on the dense cosine, with a lexical backstop for exact
+        # names/terms that BM25 clearly matches but a weaker embedder under-scores.
+        in_scope = (
+            best_score >= self.settings.score_threshold
+            or self._lexical_scope_match(question, bm25)
+        )
         if not in_scope:
             return RetrievalResult(hits=[], best_score=best_score, in_scope=False)
 
         if self.settings.use_reranker:
             kept = self._rerank(question, cosine)[: self.settings.final_k]
         else:
-            bm25 = self.bm25.scores(question)
             fused = self._rrf_fuse(cosine, bm25, top_k=self.settings.top_k)
             kept = [
                 SearchHit(chunk=self.index.chunks[i], score=round(score, 4))

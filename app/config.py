@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,9 +49,9 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     gemini_api_key: str | None = None
 
-    llm_temperature: float = 0.1
-    llm_max_tokens: int = 700
-    request_timeout: float = 60.0
+    llm_temperature: float = Field(0.1, ge=0.0, le=2.0)
+    llm_max_tokens: int = Field(700, ge=1)
+    request_timeout: float = Field(25.0, gt=0.0, le=29.0)
 
     # --- Embeddings ---
     # "local" = sentence-transformers (offline, no Ollama needed; default so dev/tests
@@ -61,19 +61,27 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434/v1"
 
     # --- Retrieval ---
-    chunk_segments: int = 2          # transcript segments grouped per chunk
-    chunk_stride: int = 1            # step between chunk starts (stride<segments => overlap)
-    top_k: int = 8                   # candidates pulled from the index
-    final_k: int = 3                 # sources kept for the answer
+    chunk_segments: int = Field(2, ge=1)   # transcript segments grouped per chunk
+    chunk_stride: int = Field(1, ge=1)     # step between chunk starts (stride<segments => overlap)
+    top_k: int = Field(8, ge=2)            # candidates pulled from the index
+    final_k: int = Field(3, ge=2, le=3)    # sources kept for the answer
     # Cosine cutoff; below => treated as out-of-scope. 0.20 is calibrated for the local
     # MiniLM default (clearly in-scope questions score >=0.26, clearly off-topic <0.18).
     # It is a coarse pre-filter only — the LLM abstention prompt is the primary grounding
     # guard. Re-tune if you switch embedding models (e.g. nomic produces higher cosines).
-    score_threshold: float = 0.20
+    score_threshold: float = Field(0.20, ge=0.0, le=1.0)
     use_reranker: bool = False
     reranker_model: str = "BAAI/bge-reranker-base"
 
     transcript_path: str = "data/transcript.txt"
+
+    @model_validator(mode="after")
+    def _validate_retrieval_knobs(self) -> "Settings":
+        if self.top_k < self.final_k:
+            raise ValueError("TOP_K must be >= FINAL_K so retrieval can return all requested sources")
+        if self.chunk_stride > self.chunk_segments:
+            raise ValueError("CHUNK_STRIDE must be <= CHUNK_SEGMENTS to avoid dropping transcript segments")
+        return self
 
     # --- Resolved provider helpers ---
     def resolved_embed_model(self) -> str:
