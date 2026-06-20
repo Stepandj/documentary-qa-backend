@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Documentary Q&A</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    body { max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { font-size: 1.4rem; }
+    .row { display: flex; gap: .5rem; }
+    input { flex: 1; padding: .6rem .7rem; font-size: 1rem; border: 1px solid #bbb; border-radius: 6px; }
+    button { padding: .6rem 1rem; font-size: 1rem; border: 0; border-radius: 6px; background: #2b5797; color: #fff; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    #answer { white-space: pre-wrap; margin-top: 1.2rem; line-height: 1.5; }
+    .sources { margin-top: 1rem; border-top: 1px solid #eee; padding-top: .8rem; }
+    .source { font-size: .9rem; color: #444; margin: .4rem 0; }
+    .ts { font-weight: 600; color: #2b5797; }
+    .hint { color: #888; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <h1>Documentary Q&A</h1>
+  <p class="hint">Ask a question about the documentary. Answers are grounded in the transcript with timestamped sources.</p>
+  <div class="row">
+    <input id="q" type="text" placeholder="e.g. What did the Victorians add to bread?" autofocus />
+    <button id="go">Ask</button>
+  </div>
+  <div id="answer"></div>
+  <div id="sources" class="sources" hidden></div>
+
+  <script>
+    const q = document.getElementById('q');
+    const go = document.getElementById('go');
+    const answerEl = document.getElementById('answer');
+    const sourcesEl = document.getElementById('sources');
+
+    async function ask() {
+      const question = q.value.trim();
+      if (!question) return;
+      go.disabled = true;
+      answerEl.textContent = '';
+      sourcesEl.hidden = true;
+      sourcesEl.innerHTML = '';
+
+      const resp = await fetch('/ask?stream=true', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      });
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop();
+        for (const evt of events) {
+          const lines = evt.split('\n');
+          const type = (lines.find(l => l.startsWith('event:')) || '').slice(6).trim();
+          const dataLine = (lines.find(l => l.startsWith('data:')) || '').slice(5).trim();
+          if (!dataLine) continue;
+          const data = JSON.parse(dataLine);
+          if (type === 'token') {
+            answerEl.textContent += data.text;
+          } else if (type === 'sources') {
+            renderSources(data.sources);
+          }
+        }
+      }
+      go.disabled = false;
+    }
+
+    function renderSources(sources) {
+      if (!sources || !sources.length) return;
+      sourcesEl.hidden = false;
+      sourcesEl.innerHTML = '<strong>Sources</strong>';
+      for (const s of sources) {
+        const div = document.createElement('div');
+        div.className = 'source';
+        div.innerHTML = `<span class="ts">${s.timestamp}</span> — ${s.excerpt}`;
+        sourcesEl.appendChild(div);
+      }
+    }
+
+    go.addEventListener('click', ask);
+    q.addEventListener('keydown', e => { if (e.key === 'Enter') ask(); });
+  </script>
+</body>
+</html>
