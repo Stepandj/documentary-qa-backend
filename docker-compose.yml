@@ -1,0 +1,55 @@
+# One command to run everything: `docker compose up`.
+#
+# Two services:
+#   ollama - serves the local open-source LLM; pulls the chat model on first boot.
+#   api    - the FastAPI Documentary Q&A backend (embeddings run locally in-process).
+#
+# To use a hosted open-source model instead of local Ollama (e.g. Kimi K2), set
+# LLM_PROVIDER + the matching API key in a .env file (see .env.example) and the api
+# service picks them up automatically — no rebuild needed.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    environment:
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - PULL_EMBED_MODEL=${PULL_EMBED_MODEL:-false}
+      - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
+    volumes:
+      - ollama_models:/root/.ollama
+      - ./ollama/entrypoint.sh:/entrypoint.sh:ro
+    ports:
+      - "11434:11434"
+    healthcheck:
+      # Healthy only once the chat model has finished pulling, so the api waits for it.
+      test: ["CMD-SHELL", "ollama list | grep -q \"${OLLAMA_MODEL:-llama3.1:8b}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 600s   # first boot downloads ~5GB; be generous
+
+  api:
+    build: .
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_BASE_URL=http://ollama:11434/v1
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - LLM_MODEL=${LLM_MODEL:-}
+      # Embeddings run locally inside the api (baked into the image) → no Ollama needed
+      # for indexing, so startup is fast and robust. Set to "ollama" to use nomic instead.
+      - EMBED_BACKEND=${EMBED_BACKEND:-local}
+      # Pass-through API keys for hosted open-source providers (optional).
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:-}
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    ports:
+      - "8000:8000"
+
+volumes:
+  ollama_models:
